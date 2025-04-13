@@ -1,0 +1,11 @@
+requests
+python-steam-api==2.1.1
+pandas 
+bs4
+ag2[bedrock]
+typing_extensions
+agentops
+dotenv
+botocore
+tenacity
+flask
