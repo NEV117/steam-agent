@@ -1,6 +1,10 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/NEV117/steam-agent)
+
 # Steam Sales Recommendation Agent
 
 This script integrates multiple agents to gather current Steam sales and user data, generate game recommendations, and format them for output. It utilizes AG2, AWS Bedrock, and utility functions for Steam API interaction and web scraping.
+
+- Check out the Gen AI–generated docs here -> [DeepWiki Docs](https://deepwiki.com/NEV117/steam-agent)
 
 ## Agent Workflow
 
@@ -24,7 +28,7 @@ See an example of a succesfull execution -> [Recomendation Example](./recomendat
 ## Setup
 > [!WARNING]  
 > Important Notes
-- This project is not actively maintained and may not work out of the box if cloned or copied. (last test was 13/04/2025)
+- This project is not actively maintained and may not work out of the box if cloned or copied. (last test was 18/05/2025)
 
 - The scraping function may not work in all regions — be aware of your geographic location when running the code. (was tested in `us-east-1` and `eu-west-1`, also some local executions from `Colombia`)
 
@@ -51,7 +55,6 @@ See an example of a succesfull execution -> [Recomendation Example](./recomendat
 
      ```sh
      STEAM_API_KEY=your_steam_community_api_key
-     AGENTOPS_API_KEY=your_agentops_api_key # only if you want to test agentops integration in ./concepts/agentops_handler.py
      AWS_ACCESS_KEY=your_aws_access_key
      AWS_SECRET_KEY=your_aws_secret_key
      ```
@@ -70,7 +73,38 @@ See an example of a succesfull execution -> [Recomendation Example](./recomendat
      http://localhost:5000/api/recommendations?steam_id=76561198447564163?count=15
      ```
 
-   - You can also try some concepts files located in [/concepts](./concepts)
+## Docker Environment
+
+  Recently, I've set up an interactive Docker environment for easier library management.
+
+  1. Build the image and launch the container using Docker Compose:
+
+      ```bash
+      docker-compose up  
+      ```
+
+  2. Access the Docker environment:
+  
+      ```bash
+      docker exec -it steam-recommender-app /bin/bash
+      ```
+
+  3. Launch the App:
+
+      ```bash
+      # Portkey integration
+      python portkey_flask_app.py
+
+      # No observability solution
+      python flask_app.py
+      ```
+
+  4. Send a GET request like this make sure to add `steam_id` and `count` params:
+     - `count` param will be the number of games the agent will retieve from user's profile
+
+     ```sh
+     http://localhost:5000/api/recommendations?steam_id=76561198447564163?count=15
+     ```
 
 ## 🌐 Resources
 
@@ -78,8 +112,9 @@ See an example of a succesfull execution -> [Recomendation Example](./recomendat
 
 [AWS Bedrock](https://aws.amazon.com/bedrock/) - Cloud service for accessing foundation models, including Claude 3.5 by Anthropic.
 
+[Portkey](https://portkey.ai/docs/integrations/agents/autogen#anthropic-to-aws-bedrock) - Documentation for integrating Portkey with the AG2 (former autogen) framework.SSS
+
 [Steam API libary](https://github.com/deivit24/python-steam-api) - A Python wrapper for interacting with the Steam API.
 
 [Scrapper Docs](https://www.youtube.com/watch?v=oKk3dplKLVg&t=1476s&pp=ugMICgJlcxABGAHKBQ5zdGVhbSBzY3JhcHBlcg%3D%3D) - YouTube video guide on building a Steam web scraper.
 
-[Agentops](https://docs.agentops.ai/v1/integrations/autogen) - Documentation for integrating AgentOps with the AutoGen framework.

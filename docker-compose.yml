@@ -1,0 +1,27 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: steam-recommender-app
+    volumes:
+      - .:/app  # Mount current directory to /app in container
+    environment:
+      - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
+      - AWS_SECRET_KEY=${AWS_SECRET_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      # ONLY for Portkey integration
+      - PORTKEY_API_KEY=${PORTKEY_API_KEY}
+      - PORTKEY_AWS_VIRTUAL_KEY=${PORTKEY_AWS_VIRTUAL_KEY}      
+      # Flask App Port
+      - PORT=5000
+    # Use tail -f /dev/null to keep the container running indefinitely
+    # AG2 library will handle database initialization when scripts are run
+    command: tail -f /dev/null
+    # If you want to run a specific script on startup instead, you can use:
+    # command: bash -c "python /app/db_example.py"
+    ports:
+      - "5000:5000"
+
+volumes:
+  sqlite_data:  # Persistent volume for SQLite database

@@ -1,16 +1,18 @@
-import agentops
-from utils.account_details import get_user_games 
-from utils.scrape_steam_sales import scrape_steam_games 
+import autogen
+from tools.account_details import get_user_games 
+from tools.scrape_steam_sales import scrape_steam_games 
 import os
 from dotenv import load_dotenv
 from typing_extensions import Annotated
 from autogen import AssistantAgent, UserProxyAgent, GroupChat, GroupChatManager, LLMConfig
-from agentops.sdk.decorators import session, agent, operation, task, workflow
+from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
+from flask import Flask, request, jsonify
+# Flask application
+app = Flask(__name__)
 
 #---------------------------------------------------------------------------------------------------------------------
 # Agent Prompts & Descriptions
 #---------------------------------------------------------------------------------------------------------------------
-
 STEAM_INFO_AGENT_PROMPT = """You are a Steam Data Specialist. Your task is to:
 1. Call get_user_games_wrapper(user_id="string", count=100) to get the user's Steam games.
 2. Call get_steam_sales_wrapper()
@@ -67,27 +69,43 @@ Example final output:
 
 
 #---------------------------------------------------------------------------------------------------------------------
-# Function Registration (Fixed)
+# LLM Configuration AG2 + Portkey
 #---------------------------------------------------------------------------------------------------------------------
-
+# Environment setup
 load_dotenv()
+PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
+PORTKEY_AWS_VIRTUAL_KEY = os.environ.get("PORTKEY_AWS_VIRTUAL_KEY")
 
-# Configure AWS Bedrock LLM
-llm_config = LLMConfig(
-    api_type="bedrock",
-    model="anthropic.claude-3-5-sonnet-20240620-v1:0",
-    aws_region="us-east-1",
-    aws_access_key=os.getenv("AWS_ACCESS_KEY"),
-    aws_secret_key=os.getenv("AWS_SECRET_KEY"),
-    temperature=0.1,
-    price=[0.003, 0.015],
-    cache_seed=None,
-)
+if not all([PORTKEY_API_KEY, PORTKEY_AWS_VIRTUAL_KEY]):
+    raise ValueError("Missing Portkey credentials")
 
-# Initialize AgentOps with the API Key and default tags
-AGENTOPS_API_KEY = os.getenv("AGENTOPS_API_KEY")
-agentops.init(AGENTOPS_API_KEY, default_tags=["AWS_Bedrock-Claude-3", "Steam-Recommendations"])
+# Portkey configuration
+config_list = [{
+    "api_key": PORTKEY_API_KEY,
+    "model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+    "api_type": "openai",# Portkey uses OpenAI-compatible API format we need to use ag2[openai] 
+    "base_url": PORTKEY_GATEWAY_URL,
+    "default_headers": createHeaders(
+        api_key=PORTKEY_API_KEY,
+        provider="bedrock",
+        virtual_key=PORTKEY_AWS_VIRTUAL_KEY
+    ),
+    "price": [0.003, 0.015]
+}]
 
+llm_config = {
+    "config_list": config_list,
+    "temperature": 0.1,
+    "cache_seed": None
+}
+
+# Agent class with empty message prevention
+class ValidatingAgent(autogen.AssistantAgent):
+    def _process_received_message(self, message, sender, silent):
+        content = message.get("content", "").strip()
+        if not content:
+            message["content"] = "TERMINATE"
+        return super()._process_received_message(message, sender, silent)
 
 # Create User Proxy for function execution
 user_proxy = UserProxyAgent(
@@ -126,10 +144,14 @@ formatter_agent = AssistantAgent(
 )
 
 
+#---------------------------------------------------------------------------------------------------------------------
+# Function Registration 
+#---------------------------------------------------------------------------------------------------------------------
 # Register functions with proper signatures and decorate them for monitoring
-@task(name="get_user_games")
 @user_proxy.register_for_execution()
+@recommendation_agent.register_for_llm(description="Get user's Steam games")
 @steam_info_agent.register_for_llm(description="Get user's Steam games")
+@formatter_agent.register_for_llm(description="Get user's Steam games")
 def get_user_games_wrapper (
     user_id: Annotated[str, "SteamID64 (decimal format)"],
     count: Annotated[int, "Number of games to return (1-100)"] = 10
@@ -137,19 +159,18 @@ def get_user_games_wrapper (
     """Direct passthrough to Steam API wrapper"""
     return get_user_games(user_id=user_id, count=count)
 
-@task(name="get_steam_sales")
 @user_proxy.register_for_execution()
+@recommendation_agent.register_for_llm(description="Get user's Steam games")
 @steam_info_agent.register_for_llm(description="Get current Steam sales")
+@formatter_agent.register_for_llm(description="Get current Steam sales")
 def get_steam_sales_wrapper() -> list[dict]:
     """Direct passthrough to sales scraper"""
     return scrape_steam_games()
 
 
 #---------------------------------------------------------------------------------------------------------------------
-# Enhanced Group Chat Setup
+# Group Chat Setup
 #---------------------------------------------------------------------------------------------------------------------
-
-@task(name="speaker_selection")
 def custom_speaker_selection(last_speaker, group_chat):
     messages = group_chat.messages
     
@@ -172,69 +193,15 @@ def custom_speaker_selection(last_speaker, group_chat):
     # Default to round-robin otherwise
     return "round_robin"
 
-# Create the group chat with the custom speaker selection
-@task(name="create_group_chat")
-def create_recommendation_chat():
-    # Update your GroupChat configuration:
-    group_chat = GroupChat(
-        agents=[user_proxy, steam_info_agent, recommendation_agent, formatter_agent],
-        messages=[],
-        max_round=15,
-        speaker_selection_method=custom_speaker_selection
-    )
-    
-    return GroupChatManager(groupchat=group_chat, llm_config=llm_config)
+# Update your GroupChat configuration:
+group_chat = GroupChat(
+    agents=[user_proxy, steam_info_agent, recommendation_agent, formatter_agent],
+    messages=[],
+    max_round=15,
+    speaker_selection_method=custom_speaker_selection
+)
 
-#---------------------------------------------------------------------------------------------------------------------
-# AgentOps Integration
-#---------------------------------------------------------------------------------------------------------------------
-
-# Define a custom agent class to track data gathering operations
-@agent(name="SteamDataAgent")
-class SteamDataAgent:
-    @operation(name="fetch_user_data")
-    def fetch_user_data(self, user_id):
-        """Fetch a user's Steam library data"""
-        return get_user_games_wrapper(user_id=user_id, count=100)
-    
-    @operation(name="fetch_sales_data")
-    def fetch_sales_data(self):
-        """Fetch current Steam sales data"""
-        return get_steam_sales_wrapper()
-
-# Define a custom agent for recommendation generation
-@agent(name="RecommendationAgent")
-class RecommendationAgent:
-    @operation(name="generate_recommendations")
-    def generate_recommendations(self, manager, user_id):
-        """Generate game recommendations for a Steam user"""
-        return user_proxy.initiate_chat(
-            manager,
-            message=f"Generate Steam recommendations for user {user_id}",
-            clear_history=True
-        )
-
-# Define a workflow that orchestrates all agents
-@workflow(name="recommendations_workflow")
-def orchestrate_recommendation_process(user_id):
-    """Orchestrate the entire recommendation process"""
-    # Create the chat manager
-    manager = create_recommendation_chat()
-    
-    # Generate recommendations
-    recommendation_agent = RecommendationAgent()
-    return recommendation_agent.generate_recommendations(manager, user_id)
-
-# Define the main session
-@session(name="steam-recommendation-session", version=1)
-def recommendation_workflow(user_id):
-    """Main workflow for generating Steam game recommendations"""
-    # First create data agent and fetch data (this won't actually be used
-    # in the workflow but will be tracked by AgentOps)
-    data_agent = SteamDataAgent()
-    
-    # Run the recommendation workflow
-    return orchestrate_recommendation_process(user_id)
+manager = GroupChatManager(groupchat=group_chat, llm_config=llm_config)
 
 #---------------------------------------------------------------------------------------------------------------------
 # Execution
@@ -247,8 +214,51 @@ def recommendation_workflow(user_id):
 # 76561199080812070 //Zerox
 #---------------------------------------------------------------------------------------------------------------------
 
-# Execute the workflow with the specified user ID
-result = recommendation_workflow("76561198447564163")
+#---------------------------------------------------------------------------------------------------------------------
+# Flask Routes
+#---------------------------------------------------------------------------------------------------------------------
 
-# End the AgentOps session with a success status
-agentops.end_session("Success")
+@app.route('/api/recommendations', methods=['GET'])
+def get_recommendations():
+    # Get steam_id from query parameters
+    steam_id = request.args.get('steam_id')
+
+    # Get count parameter with default value of 10
+    count = request.args.get('count', default=10, type=int)
+    
+    if not steam_id:
+        return jsonify({'error': 'Missing steam_id parameter'}), 400
+    
+    try:
+        # Include count in the message to be passed to the agents
+        result = user_proxy.initiate_chat(
+            manager,
+            message=f"Generate Steam recommendations for user {steam_id} with count {count}",
+            clear_history=True
+        )
+        
+        # Extract the formatted recommendations from the last formatter_agent message
+        markdown_output = None
+        for message in reversed(manager.groupchat.messages):
+            if message.get('name') == 'formatter_agent' and 'TERMINATE' in message.get('content', ''):
+                content = message.get('content', '').replace('TERMINATE', '').strip()
+                
+                # Wrap the content in a markdown code block
+                markdown_output = f"```Markdown\n{content}\n```"
+                break
+        
+        if markdown_output:
+            return jsonify({'success': True, 'markdown': markdown_output})
+        else:
+            return jsonify({'error': 'No recommendations generated'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+#---------------------------------------------------------------------------------------------------------------------
+# Main entry point
+#---------------------------------------------------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)

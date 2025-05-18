@@ -2,10 +2,8 @@ requests
 python-steam-api==2.1.1
 pandas 
 bs4
-ag2[bedrock]
+ag2[openai]
 typing_extensions
-agentops
 dotenv
-botocore
-tenacity
+portkey-ai
 flask
